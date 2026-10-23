@@ -24,9 +24,6 @@ def conexao_bd():
     return conexao, cursor
 
 def identificacao_maquina(conexao, cursor):
-    # conexao = conexao_bd()
-    # cursor = conexao.cursor()
-
     hostname = socket.gethostname()
     nome_so = platform.system()
     mac_address = get_mac_address()
@@ -210,22 +207,23 @@ def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos):
 
             captura_id = cursor.lastrowid
 
+            id_discretizacao = 1
             if status != "NORMAL":
                 if "CRÍTICO" in status:
-                    id_discretizacao = 2
+                    id_discretizacao = 3
                 else:
-                    id_discretizacao = 1
+                    id_discretizacao = 2
 
-                sql_inserir_alerta = """
-                    INSERT INTO historico_alerta (data_hora, maquina_captura_id, componentes_captura_id, discretizacao_id)
-                    VALUES (%s, %s, %s, %s)
-                """
-                cursor.execute(sql_inserir_alerta, (
-                    horario,
-                    captura_id,
-                    comp_id,
-                    id_discretizacao,
-                ))
+            sql_inserir_alerta = """
+                INSERT INTO historico_alerta (data_hora, maquina_captura_id, componentes_captura_id, discretizacao_id)
+                VALUES (%s, %s, %s, %s)
+            """
+            cursor.execute(sql_inserir_alerta, (
+                horario,
+                captura_id,
+                comp_id,
+                id_discretizacao,
+            ))
                 # print(f"Alerta: ({status}) gravado da captura: {captura_id}")
 
             conexao.commit()
@@ -321,6 +319,7 @@ def consulta_completa(cursor, conexao, maquina_id, componentes_ativos):
 
 def consulta_banco(cursor):
     limpar_menu()
+    # ajustar esse select
     cursor.execute("SELECT * FROM captura ORDER BY data_hora DESC LIMIT 10")
     resultado_bd = cursor.fetchall()
 
