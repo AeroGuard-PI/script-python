@@ -366,20 +366,22 @@ def menu_cpu(maquina_id):
         if resposta == "1":
             limpar_menu()
             dados_cpu = coletar_cpu()
-            # capturas_alertas(maquina_id, dados_cpu)
             horarioAtual = dados_cpu["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            uso_cpu = dados_cpu["uso_cpu"]
+            status = discretizar(uso_cpu, "cpu", limite_alerta, limite_critico)
 
             print("--------------------------------------------")
             print("USO DA CPU")
             print("--------------------------------------------")
             print(f"Horário atual: {horarioAtual}")
             print(f"Uso de CPU: {dados_cpu['uso_cpu']:.2f}%")
+            print(f"STATUS: {status}")
             voltar()
         elif resposta == "2":
             limpar_menu()
             dados_cpu = coletar_cpu()
-            # capturas_alertas(maquina_id, dados_cpu)
             horarioAtual = dados_cpu["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            
             print("--------------------------------------------")
             print("NÚCLEOS DA CPU")
             print("--------------------------------------------")
@@ -390,9 +392,9 @@ def menu_cpu(maquina_id):
         elif resposta == "3":
             limpar_menu()
             dados_cpu = coletar_cpu()
-            # capturas_alertas(maquina_id, dados_cpu)
             horarioAtual = dados_cpu["horario"].strftime("%d/%m/%Y %H:%M:%S")
             freq_txt = f"{dados_cpu['frequencia_cpu']:.2f} MHz" if dados_cpu["frequencia_cpu"] is not None else "Frequência da CPU indisponível."
+
             print("--------------------------------------------")
             print("FREQUÊNCIA DA CPU")
             print("--------------------------------------------") 
@@ -421,12 +423,15 @@ def menu_memoria(maquina_id):
             limpar_menu()
             dados_memoria = coletar_memoria()
             horarioAtual = dados_memoria["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            uso_memoria = dados_memoria["uso_memoria"]
+            status = discretizar(uso_memoria, "memoria", limite_alerta, limite_critico)
 
             print("--------------------------------------------")
             print("USO DA MEMÓRIA")
             print("--------------------------------------------")
             print(f"Horário atual: {horarioAtual}")
             print(f"Uso de memória: {dados_memoria['uso_memoria']:.2f}%")
+            print(f"STATUS: {status}")
             voltar()
         elif resposta == "2":
             limpar_menu()
@@ -462,12 +467,15 @@ def menu_disco(maquina_id):
             limpar_menu()
             dados_disco = coletar_disco()
             horarioAtual = dados_disco["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            uso_disco = dados_disco["uso_disco"]
+            status = discretizar(uso_disco, "disco", limite_alerta, limite_critico)
 
             print("--------------------------------------------")
             print("USO DO DISCO")
             print("--------------------------------------------")
             print(f"Horário atual: {horarioAtual}")
             print(f"Uso do disco: {dados_disco['uso_disco']:.2f}%")
+            print(f"STATUS: {status}")
             voltar()
         elif resposta == "2":
             limpar_menu()
