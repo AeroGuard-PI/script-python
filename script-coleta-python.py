@@ -21,7 +21,11 @@ def conexao_bd():
     )
 
     cursor = conexao.cursor()
-    print("Conexão com o banco de dados realizada com sucesso!")
+    print("""
++--------------------------------------------+-----------------------------------------+
+|                    CONEXÃO COM O BANCO DE DADOS REALIZADA                            |
++--------------------------------------------+-----------------------------------------+
+""")
     return conexao, cursor
 
 def identificacao_maquina(conexao, cursor):
@@ -38,7 +42,12 @@ def identificacao_maquina(conexao, cursor):
         maquina_id = resultado_maquina[0]
         time.sleep(5)
         limpar_menu()
-        print(f"Máquina encontrada com o ID {maquina_id}")
+        msg_busca = f"Máquina encontrada com o ID {maquina_id}"
+        print("""
++--------------------------------------------+-----------------------------------------+
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(msg_busca))
         time.sleep(1.5)
         sql_atualizar_maquina = """
             UPDATE maquina SET hostname = %s, so = %s, macAddress = %s
@@ -46,7 +55,11 @@ def identificacao_maquina(conexao, cursor):
     """
         cursor.execute(sql_atualizar_maquina, (hostname, nome_so, mac_address, maquina_id, empresa_id))
         time.sleep(1.5)
-        print("Servidor atualizado com sucesso")
+        print("""
++--------------------------------------------+-----------------------------------------+
+|                     SERVIDOR ATUALIZADO COM SUCESSO                                  |
++--------------------------------------------+-----------------------------------------+
+""")
         time.sleep(1.5)
     else:
         sql_inserir_maquina = """
@@ -56,7 +69,12 @@ def identificacao_maquina(conexao, cursor):
         conexao.commit()
         maquina_id = cursor.lastrowid
         time.sleep(2)
-        print(f"Máquina {maquina_id} cadastrada!")
+        msg_cadastro = f"Máquina {maquina_id} cadastrada!"
+        print("""
++--------------------------------------------+-----------------------------------------+
+| {:<85} |
++--------------------------------------------+-----------------------------------------+
+""".format(msg_cadastro))
 
     return maquina_id
 
@@ -71,7 +89,11 @@ def obter_componentes(conexao, cursor, maquina_id):
     componentes_ativos = cursor.fetchall()
 
     if not componentes_ativos:
-        print("Nenhuma configuração encontrada. Aplicando configuração padrão")
+        print("""
++--------------------------------------------+-----------------------------------------+
+|           NENHUMA CONFIGURAÇÃO ENCONTRADA - APLICANDO PADRÃO                         |
++--------------------------------------------+-----------------------------------------+
+""")
         cursor.execute("SELECT id, nome FROM componentes WHERE nome IN ('CPU', 'Memória', 'Disco')")
         todos_componentes = cursor.fetchall()
 
@@ -86,9 +108,15 @@ def obter_componentes(conexao, cursor, maquina_id):
         print("Configuração padrão criada")
 
     print("\n")
-    print("Componentes monitorados:")
+    print("""
++--------------------------------------------+-----------------------------------------+
+|                           COMPONENTES MONITORADOS                                    |
++--------------------------------------------+-----------------------------------------+""")
     for comp_id, comp_nome in componentes_ativos:
-        print(f"ID {comp_id} - Componente {comp_nome}")
+        item = f"ID {comp_id} - Componente {comp_nome}"
+        print(f"| {item:<84} |")
+        time.sleep(1)
+    print("+--------------------------------------------+-----------------------------------------+")
     return componentes_ativos
 
 
@@ -259,37 +287,50 @@ def captura_continua(conexao, cursor, maquina_id, componentes_ativos):
 def menu_principal(componentes_ativos):
     horario_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-    print("--------------------------------------------")
-    print("MENU PRINCIPAL")
-    print("--------------------------------------------")
-    print(f"Momento atual da consulta: {horario_atual}")
-    print("--------------------------------------------")
-    print("[1] Informações sobre o servidor")
-    print("[2] Consulta completa de recursos")
-    print("[3] Consultar dados armazenados")
+    print("""
++--------------------------------------------+-----------------------------------------+
+|                                  MENU PRINCIPAL                                      |
++--------------------------------------------+-----------------------------------------+
+| Momento atual da consulta: {:<57} |
++--------------------------------------------+-----------------------------------------+
+| 1. Informações sobre o servidor                                                      |
+| 2. Consulta completa de recursos                                                     |
+| 3. Consultar dados armazenados                                                       |""".format(horario_atual))
     
     opcao = 4
     for comp_id, comp_nome in componentes_ativos:
-        print(f"[{opcao}] Opções de {comp_nome}")
-        opcao = opcao + 1
-    print("[0] - Sair")
+        item = f"{opcao}. Opções de {comp_nome}"
+        print(f"| {item:<84} |")
+        opcao += 1
 
-
+    print("""| 0. Sair                                                                              |
++--------------------------------------------+-----------------------------------------+
+""")
+      
 
 def informacoes_servidor():
     limpar_menu()
+    hostname = socket.gethostname()
+    so = platform.system()
+    versao = platform.release()
+    mac = get_mac_address()
+    n_fisicos = p.cpu_count(logical=False)
+    n_logicos = p.cpu_count(logical=True)
 
-    print("--------------------------------------------")
-    print("INFORMAÇÕES DO SERVIDOR")
-    print("--------------------------------------------")
-    print(f"Nome do servidor: {socket.gethostname()}")
-    print(f"Sistema operaional: {platform.system()}")
-    print(f"Versão do sistema: {platform.release()}")
-    print(f"MacAddres: {get_mac_address()}")
-    print(f"Núcleos físicos: {p.cpu_count(logical=False)}")
-    print(f"Núcleos lógicos: {p.cpu_count(logical=True)}")  
+    print("""
++--------------------------------------------+-----------------------------------------+
+|                             INFORMAÇÕES DO SERVIDOR                                  |
++--------------------------------------------+-----------------------------------------+
+| Nome do servidor: {:<66} |
+| Sistema operacional: {:<63} |
+| Versão do sistema: {:<65} |
+| MacAddress: {:<72} |
+| Núcleos físicos: {:<67} |
+| Núcleos lógicos: {:<67} |
++--------------------------------------------+-----------------------------------------+
+""".format(hostname, so, versao, str(mac), str(n_fisicos), str(n_logicos)))
 
-    voltar()  
+    voltar()
 
 
 def consulta_completa(cursor, conexao, maquina_id, componentes_ativos):
@@ -298,12 +339,12 @@ def consulta_completa(cursor, conexao, maquina_id, componentes_ativos):
     capturas_alertas(cursor, conexao, maquina_id, componentes_ativos)
     horarioAtual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-    print("--------------------------------------------")
-    print("CAPTURA COMPLETA")
-    print("--------------------------------------------")
-    print("Realizando coleta dos componentes ativos...")
-    print("--------------------------------------------")
-    print(f"Horário da captura: {horarioAtual}")
+    print("""
++--------------------------------------------+-----------------------------------------+
+|                                CAPTURA COMPLETA                                      |
++--------------------------------------------+-----------------------------------------+
+| Horário da captura: {:<64} |
++--------------------------------------------+-----------------------------------------+""".format(horarioAtual))
 
     for comp_id, comp_nome in componentes_ativos:
         nome_formatado = comp_nome.strip().lower().replace("é", "e").replace("ó","o")
@@ -311,20 +352,26 @@ def consulta_completa(cursor, conexao, maquina_id, componentes_ativos):
         if nome_formatado == "cpu":
             dados_cpu = coletar_cpu()
             freq = f"{dados_cpu['frequencia_cpu']:.2f} MHz" if dados_cpu["frequencia_cpu"] else "indisponivel"
-            print()
-            print(f"Uso de CPU: {dados_cpu['uso_cpu']:.2f}%")
-            print(f"Frequência: {freq}")
+            u_cpu = f"Uso de CPU: {dados_cpu['uso_cpu']:.2f}%"
+            f_cpu = f"Frequência: {freq}"
+            print(f"| {u_cpu:<84} |")
+            print(f"| {f_cpu:<84} |")
         elif nome_formatado == "memoria":
             dados_memoria = coletar_memoria()
-
-            print(f"Uso de memória: {dados_memoria['uso_memoria']:.2f}%")
-            print(f"Memória total: {dados_memoria['memoria_total']:.2f} GB")
-            print(f"Memória disponível: {dados_memoria['memoria_disponivel']:.2f} GB")
+            u_mem = f"Uso de memória: {dados_memoria['uso_memoria']:.2f}%"
+            t_mem = f"Memória total: {dados_memoria['memoria_total']:.2f} GB"
+            d_mem = f"Memória disponível: {dados_memoria['memoria_disponivel']:.2f} GB"
+            print(f"| {u_mem:<84} |")
+            print(f"| {t_mem:<84} |")
+            print(f"| {d_mem:<84} |")
         elif nome_formatado == "disco":
             dados_disco = coletar_disco()
-            print(f"Uso do Disco: {dados_disco['uso_disco']:.2f}%")
+            u_disc = f"Uso do Disco: {dados_disco['uso_disco']:.2f}%"
+            print(f"| {u_disc:<84} |")
 
+    print("+--------------------------------------------+-----------------------------------------+")
     voltar()
+
 
 def consulta_banco(cursor):
     limpar_menu()
@@ -340,9 +387,9 @@ def consulta_banco(cursor):
     cursor.execute(sql, (empresa_id,))
     resultado_bd = cursor.fetchall()
 
-    print("-----------------------------------------------------------------------------------------")
-    print("INFORMAÇÕES DO BANCO DE DADOS")
-    print("-----------------------------------------------------------------------------------------")
+    print("+----------------------------------------------------------------------------------------------+")
+    print("|                                 INFORMAÇÕES DO BANCO DE DADOS                                |")
+    print("+----------------------------------------------------------------------------------------------+")
 
     print(tabulate(
             resultado_bd,
@@ -352,15 +399,21 @@ def consulta_banco(cursor):
 
     voltar()
 
+
 def menu_cpu(maquina_id):
     while True:
         limpar_menu()
 
-        print("MENU DE CPU")
-        print("[1] Consultar uso de CPU")
-        print("[2] Consultar núcleos lógicos e físicos")
-        print("[3] Consultar frequência de CPU")
-        print("[0] Para retornar")
+        print("""
++--------------------------------------------+-----------------------------------------+
+|                                  MENU DE CPU                                         |
++--------------------------------------------+-----------------------------------------+
+| 1. Consultar uso de CPU                                                              |
+| 2. Consultar núcleos lógicos e físicos                                               |
+| 3. Consultar frequência de CPU                                                       |
+| 0. Para retornar                                                                     |
++--------------------------------------------+-----------------------------------------+
+""")
 
         resposta = input("Digite a opção desejada: ").strip().lower()
         if resposta == "1":
@@ -369,37 +422,51 @@ def menu_cpu(maquina_id):
             horarioAtual = dados_cpu["horario"].strftime("%d/%m/%Y %H:%M:%S")
             uso_cpu = dados_cpu["uso_cpu"]
             status = discretizar(uso_cpu, "cpu", limite_alerta, limite_critico)
+            u_cpu = f"Uso de CPU: {dados_cpu['uso_cpu']:.2f}%"
+            s_cpu = f"STATUS: {status}"
 
-            print("--------------------------------------------")
-            print("USO DA CPU")
-            print("--------------------------------------------")
-            print(f"Horário atual: {horarioAtual}")
-            print(f"Uso de CPU: {dados_cpu['uso_cpu']:.2f}%")
-            print(f"STATUS: {status}")
+            print("""
++--------------------------------------------+-----------------------------------------+
+|                                  USO DA CPU                                          |
++--------------------------------------------+-----------------------------------------+
+| Horário atual: {:<69} |
+| {:<84} |
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(horarioAtual, u_cpu, s_cpu))
             voltar()
         elif resposta == "2":
             limpar_menu()
             dados_cpu = coletar_cpu()
             horarioAtual = dados_cpu["horario"].strftime("%d/%m/%Y %H:%M:%S")
-            
-            print("--------------------------------------------")
-            print("NÚCLEOS DA CPU")
-            print("--------------------------------------------")
-            print(f"Horário atual: {horarioAtual}")
-            print(f"Núcleos físicos: {p.cpu_count(logical=False)}")
-            print(f"Núcleos lógicos: {p.cpu_count(logical=True)}")
+            n_fis = f"Núcleos físicos: {p.cpu_count(logical=False)}"
+            n_log = f"Núcleos lógicos: {p.cpu_count(logical=True)}"
+
+            print("""
++--------------------------------------------+-----------------------------------------+
+|                                NÚCLEOS DA CPU                                        |
++--------------------------------------------+-----------------------------------------+
+| Horário atual: {:<69} |
+| {:<84} |
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(horarioAtual, n_fis, n_log))
             voltar()
         elif resposta == "3":
             limpar_menu()
             dados_cpu = coletar_cpu()
             horarioAtual = dados_cpu["horario"].strftime("%d/%m/%Y %H:%M:%S")
             freq_txt = f"{dados_cpu['frequencia_cpu']:.2f} MHz" if dados_cpu["frequencia_cpu"] is not None else "Frequência da CPU indisponível."
+            f_txt = f"Frequência: {freq_txt}"
 
-            print("--------------------------------------------")
-            print("FREQUÊNCIA DA CPU")
-            print("--------------------------------------------") 
-            print(f"Horário atual: {horarioAtual}")   
-            print(f"Frequência: {freq_txt}")        
+            print("""
++--------------------------------------------+-----------------------------------------+
+|                              FREQUÊNCIA DA CPU                                       |
++--------------------------------------------+-----------------------------------------+
+| Horário atual: {:<69} |
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(horarioAtual, f_txt))
             voltar()
         elif resposta == "0":
             limpar_menu()
@@ -407,16 +474,21 @@ def menu_cpu(maquina_id):
         else:
             print("Opção inválida, tente novamente")
             time.sleep(2)
-            
+
 
 def menu_memoria(maquina_id):
     while True:
         limpar_menu()
 
-        print("MENU DE MEMÓRIA")
-        print("[1] Consultar uso de memória")
-        print("[2] Consultar memória total e disponível")
-        print("[0] Para retornar")
+        print("""
++--------------------------------------------+-----------------------------------------+
+|                                MENU DE MEMÓRIA                                       |
++--------------------------------------------+-----------------------------------------+
+| 1. Consultar uso de memória                                                          |
+| 2. Consultar memória total e disponível                                              |
+| 0. Para retornar                                                                     |
++--------------------------------------------+-----------------------------------------+
+""")
 
         resposta = input("Digite a opção desejada: ").strip().lower()
         if resposta == "1":
@@ -425,25 +497,35 @@ def menu_memoria(maquina_id):
             horarioAtual = dados_memoria["horario"].strftime("%d/%m/%Y %H:%M:%S")
             uso_memoria = dados_memoria["uso_memoria"]
             status = discretizar(uso_memoria, "memoria", limite_alerta, limite_critico)
+            u_mem = f"Uso de memória: {dados_memoria['uso_memoria']:.2f}%"
+            s_mem = f"STATUS: {status}"
 
-            print("--------------------------------------------")
-            print("USO DA MEMÓRIA")
-            print("--------------------------------------------")
-            print(f"Horário atual: {horarioAtual}")
-            print(f"Uso de memória: {dados_memoria['uso_memoria']:.2f}%")
-            print(f"STATUS: {status}")
+            print("""
++--------------------------------------------+-----------------------------------------+
+|                                USO DA MEMÓRIA                                        |
++--------------------------------------------+-----------------------------------------+
+| Horário atual: {:<69} |
+| {:<84} |
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(horarioAtual, u_mem, s_mem))
             voltar()
         elif resposta == "2":
             limpar_menu()
             dados_memoria = coletar_memoria()
             horarioAtual = dados_memoria["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            t_mem = f"Memória total: {dados_memoria['memoria_total']:.2f} GB"
+            d_mem = f"Memória disponível: {dados_memoria['memoria_disponivel']:.2f} GB"
 
-            print("--------------------------------------------")
-            print("CAPACIDADE DA MEMÓRIA")
-            print("--------------------------------------------")
-            print(f"Horário atual: {horarioAtual}")
-            print(f"Memória total: {dados_memoria['memoria_total']:.2f} GB")
-            print(f"Memória disponível: {dados_memoria['memoria_disponivel']:.2f} GB")
+            print("""
++--------------------------------------------+-----------------------------------------+
+|                            CAPACIDADE DA MEMÓRIA                                     |
++--------------------------------------------+-----------------------------------------+
+| Horário atual: {:<69} |
+| {:<84} |
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(horarioAtual, t_mem, d_mem))
             voltar()
         elif resposta == "0":
             limpar_menu()
@@ -457,10 +539,15 @@ def menu_disco(maquina_id):
     while True:
         limpar_menu()
 
-        print("MENU DE DISCO")
-        print("[1] Consultar uso do disco principal")
-        print("[2] Consultar espaço total e livre do disco")
-        print("[0] Para retornar")
+        print("""
++--------------------------------------------+-----------------------------------------+
+|                                MENU DE DISCO                                         |
++--------------------------------------------+-----------------------------------------+
+| 1. Consultar uso do disco principal                                                  |
+| 2. Consultar espaço total e livre do disco                                           |
+| 0. Para retornar                                                                     |
++--------------------------------------------+-----------------------------------------+
+""")
 
         resposta = input("Digite a opção desejada: ").strip().lower()
         if resposta == "1":
@@ -469,13 +556,18 @@ def menu_disco(maquina_id):
             horarioAtual = dados_disco["horario"].strftime("%d/%m/%Y %H:%M:%S")
             uso_disco = dados_disco["uso_disco"]
             status = discretizar(uso_disco, "disco", limite_alerta, limite_critico)
+            u_disc = f"Uso do disco: {dados_disco['uso_disco']:.2f}%"
+            s_disc = f"STATUS: {status}"
 
-            print("--------------------------------------------")
-            print("USO DO DISCO")
-            print("--------------------------------------------")
-            print(f"Horário atual: {horarioAtual}")
-            print(f"Uso do disco: {dados_disco['uso_disco']:.2f}%")
-            print(f"STATUS: {status}")
+            print("""
++--------------------------------------------+-----------------------------------------+
+|                                USO DO DISCO                                          |
++--------------------------------------------+-----------------------------------------+
+| Horário atual: {:<69} |
+| {:<84} |
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(horarioAtual, u_disc, s_disc))
             voltar()
         elif resposta == "2":
             limpar_menu()
@@ -486,13 +578,18 @@ def menu_disco(maquina_id):
             disco = p.disk_usage(caminho_disco)
             disco_total = disco.total / (1024 ** 3)
             disco_livre = disco.free / (1024 ** 3)
+            t_disc = f"Espaço total: {disco_total:.2f} GB"
+            l_disc = f"Espaço livre: {disco_livre:.2f} GB"
 
-            print("--------------------------------------------")
-            print("ESPAÇO DO DISCO")
-            print("--------------------------------------------")
-            print(f"Horário atual: {horarioAtual}")
-            print(f"Espaço total: {disco_total:.2f} GB")
-            print(f"Espaço livre: {disco_livre:.2f} GB")
+            print("""
++--------------------------------------------+-----------------------------------------+
+|                               ESPAÇO DO DISCO                                        |
++--------------------------------------------+-----------------------------------------+
+| Horário atual: {:<69} |
+| {:<84} |
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(horarioAtual, t_disc, l_disc))
             voltar()
         elif resposta == "0":
             limpar_menu()
@@ -503,18 +600,31 @@ def menu_disco(maquina_id):
 
 def main():
     limpar_menu()
-    print("Iniciando o sistema de monitoramento...")
+    print("""
++--------------------------------------------+-----------------------------------------+
+|                    INICIANDO O SISTEMA DE MONITORAMENTO                              |
++--------------------------------------------+-----------------------------------------+
+""")
     time.sleep(2)
     limpar_menu()
 
-    print("Conectando ao banco de dados...")
+    print("""
++--------------------------------------------+-----------------------------------------+
+|                    CONECTANDO AO BANCO DE DADOS...                                   |
++--------------------------------------------+-----------------------------------------+
+""")
     time.sleep(2.5)
 
     conexao, cursor = conexao_bd()
     maquina_id = identificacao_maquina(conexao, cursor)
     componentes_ativos = obter_componentes(conexao, cursor, maquina_id)
 
-    print(f"ID do servidor: {maquina_id}")
+    info_servidor = f"ID do servidor: {maquina_id}"
+    print("""
++--------------------------------------------+-----------------------------------------+
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(info_servidor))
 
     thread_secundaria = threading.Thread(target=captura_continua, args=(conexao, cursor, maquina_id, componentes_ativos), daemon=True)
     thread_secundaria.start()
@@ -541,12 +651,12 @@ def main():
         elif resposta == "0":
             limpar_menu()
             print("Encerrando o sistema de monitoramento...")
-            time.sleep(2)
+            time.sleep(2.5)
             print("Programa encerrado.")
             break
         else:
             print("Opção inválida, tente novamente.")
-            time.sleep(2)
+            time.sleep(2.5)
             limpar_menu()
 
     cursor.close()
