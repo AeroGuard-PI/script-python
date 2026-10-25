@@ -8,6 +8,7 @@ import mysql.connector as mysql
 from dotenv import load_dotenv
 from getmac import get_mac_address
 import threading
+from tabulate import tabulate
 
 load_dotenv()
 
@@ -35,13 +36,18 @@ def identificacao_maquina(conexao, cursor):
 
     if resultado_maquina is not None:
         maquina_id = resultado_maquina[0]
+        time.sleep(5)
+        limpar_menu()
         print(f"Máquina encontrada com o ID {maquina_id}")
+        time.sleep(1.5)
         sql_atualizar_maquina = """
             UPDATE maquina SET hostname = %s, so = %s, macAddress = %s
                 WHERE id = %s AND fkEmpresa = %s
     """
         cursor.execute(sql_atualizar_maquina, (hostname, nome_so, mac_address, maquina_id, empresa_id))
+        time.sleep(1.5)
         print("Servidor atualizado com sucesso")
+        time.sleep(1.5)
     else:
         sql_inserir_maquina = """
             INSERT INTO maquina (hostname, so, macAddress, fkEmpresa) VALUES (%s, %s, %s, %s)
@@ -49,6 +55,7 @@ def identificacao_maquina(conexao, cursor):
         cursor.execute(sql_inserir_maquina, (hostname, nome_so, mac_address, empresa_id))
         conexao.commit()
         maquina_id = cursor.lastrowid
+        time.sleep(2)
         print(f"Máquina {maquina_id} cadastrada!")
 
     return maquina_id
@@ -78,6 +85,7 @@ def obter_componentes(conexao, cursor, maquina_id):
         componentes_ativos = todos_componentes
         print("Configuração padrão criada")
 
+    print("\n")
     print("Componentes monitorados:")
     for comp_id, comp_nome in componentes_ativos:
         print(f"ID {comp_id} - Componente {comp_nome}")
@@ -214,17 +222,18 @@ def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos):
                 else:
                     id_discretizacao = 2
 
-            sql_inserir_alerta = """
-                INSERT INTO historico_alerta (data_hora, maquina_captura_id, componentes_captura_id, discretizacao_id)
-                VALUES (%s, %s, %s, %s)
-            """
-            cursor.execute(sql_inserir_alerta, (
-                horario,
-                captura_id,
-                comp_id,
-                id_discretizacao,
-            ))
-                # print(f"Alerta: ({status}) gravado da captura: {captura_id}")
+
+            if id_discretizacao == 2 or id_discretizacao == 3:
+                sql_inserir_alerta = """
+                    INSERT INTO historico_alerta (data_hora, maquina_captura_id, componentes_captura_id, discretizacao_id)
+                    VALUES (%s, %s, %s, %s)
+                """
+                cursor.execute(sql_inserir_alerta, (
+                    horario,
+                    captura_id,
+                    captura_id, 
+                    id_discretizacao,
+                ))
 
             conexao.commit()
 
@@ -319,16 +328,27 @@ def consulta_completa(cursor, conexao, maquina_id, componentes_ativos):
 
 def consulta_banco(cursor):
     limpar_menu()
-    # ajustar esse select
-    cursor.execute("SELECT * FROM captura ORDER BY data_hora DESC LIMIT 10")
+    empresa_id = 1  
+    sql = """
+        SELECT c.tipo, c.valor, c.unidade_medida, c.componentes_id, c.maquina_id, m.fkEmpresa
+            FROM captura AS c
+                JOIN maquina AS m ON c.maquina_id = m.id
+                    WHERE m.fkEmpresa = %s
+                        ORDER BY c.data_hora DESC LIMIT 10
+    """
+    
+    cursor.execute(sql, (empresa_id,))
     resultado_bd = cursor.fetchall()
 
-    print("--------------------------------------------")
+    print("-----------------------------------------------------------------------------------------")
     print("INFORMAÇÕES DO BANCO DE DADOS")
-    print("--------------------------------------------")
-    # adicionar tabulate aqui, resultado provisório, ainda vou ajustar
-    for resultado in resultado_bd:
-        print(resultado)
+    print("-----------------------------------------------------------------------------------------")
+
+    print(tabulate(
+            resultado_bd,
+            headers=["Tipo", "Valor", "Unidade de medida", "ID componente", "ID Servidor", "ID empresa"],
+            tablefmt="grid"
+        ))
 
     voltar()
 
@@ -476,7 +496,11 @@ def menu_disco(maquina_id):
 def main():
     limpar_menu()
     print("Iniciando o sistema de monitoramento...")
+    time.sleep(2)
+    limpar_menu()
+
     print("Conectando ao banco de dados...")
+    time.sleep(2.5)
 
     conexao, cursor = conexao_bd()
     maquina_id = identificacao_maquina(conexao, cursor)
