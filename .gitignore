@@ -1,2 +1,9 @@
+.git/
 .env
+.env.*
+!.env.example
+coletor.env
+.venv/
 __pycache__/
+*.pyc
+target/

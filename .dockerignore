@@ -1,0 +1,9 @@
+.git
+.env
+.env.dev
+coletor.env
+node_modules
+target
+.venv
+__pycache__
+*.pyc
