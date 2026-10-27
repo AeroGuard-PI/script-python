@@ -89,7 +89,7 @@ def conexao_bd():
         raise
 
 
-def identificacao_maquina(conexao, cursor):
+def identificacao_maquina(conexao, cursor, informacoes=None):
     mac = mac_da_maquina()
     hostname = socket.gethostname()[:50]
     sistema = sistema_operacional()
@@ -106,6 +106,8 @@ def identificacao_maquina(conexao, cursor):
     """
     cursor.execute(sql, (empresa_id, mac.replace(":", "")))
     maquinas = cursor.fetchall()
+    if informacoes is not None:
+        informacoes["maquina_encontrada"] = bool(maquinas)
     if not maquinas:
         cursor.execute("""
             INSERT INTO maquina (hostname, so, macAddress, fkEmpresa)
@@ -122,8 +124,9 @@ def identificacao_maquina(conexao, cursor):
 
 
 
-def obter_componentes(conexao, cursor, maquina_id):
+def obter_componentes(conexao, cursor, maquina_id, informacoes=None):
     ativos = []
+    configuracoes_criadas = 0
     for nome in ("CPU", "Memória", "Disco"):
         cursor.execute("SELECT id, nome FROM componentes WHERE nome = %s", (nome,))
         componentes = cursor.fetchall()
@@ -142,13 +145,19 @@ def obter_componentes(conexao, cursor, maquina_id):
                 VALUES (1, %s, %s)
             """, (maquina_id, componente_id))
             configuracao = (cursor.lastrowid, 1)
+            configuracoes_criadas += 1
         if configuracao[1] == 1:
             ativos.append((configuracao[0], componente_id, nome))
+    if informacoes is not None:
+        informacoes["configuracoes_criadas"] = configuracoes_criadas
     return ativos
 
 
 
 controle_tempo = {}
+ultima_coleta = {}
+erro_coleta = None
+bloqueio_coleta = threading.Lock()
 
 def discretizar(valor, componente, limite_alerta, limite_critico):
     limites = (limite_alerta, limite_critico)
@@ -230,6 +239,7 @@ def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos):
     if not 0 <= niveis["ALERTA"][1] < niveis["CRÍTICO"][1] <= 100:
         raise ValueError("Os limites devem estar entre 0 e 100, com ALERTA menor que CRÍTICO.")
     ativos = set()
+    leituras = {}
     for configuracao_id, componente_id, nome in componentes_ativos:
         chave = nome.lower().replace("ó", "o")
         ativos.add(chave)
@@ -252,9 +262,11 @@ def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos):
                     componentes_captura_id, discretizacao_id)
                 VALUES (%s, %s, %s, %s)
             """, (horario, captura_id, captura_id, niveis[nivel][0]))
+        leituras[chave] = dict(dados, status=status)
     for componente in list(controle_tempo):
         if componente not in ativos:
             del controle_tempo[componente]
+    return leituras
 
 
 
@@ -268,23 +280,36 @@ def voltar():
     limpar_menu()
 
 
-def captura_continua(parar):
+def captura_continua(parar, pronto=None):
+    global ultima_coleta, erro_coleta
     while not parar.is_set():
         conexao = cursor = None
         try:
+            informacoes = {}
             conexao, cursor = conexao_bd()
-            maquina_id = identificacao_maquina(conexao, cursor)
-            componentes = obter_componentes(conexao, cursor, maquina_id)
-            capturas_alertas(cursor, conexao, maquina_id, componentes)
+            maquina_id = identificacao_maquina(conexao, cursor, informacoes)
+            componentes = obter_componentes(conexao, cursor, maquina_id, informacoes)
+            leituras = capturas_alertas(cursor, conexao, maquina_id, componentes)
             conexao.commit()
+            with bloqueio_coleta:
+                ultima_coleta = {
+                    "maquina_id": maquina_id,
+                    "componentes": tuple(componentes),
+                    "leituras": leituras,
+                    **informacoes
+                }
+                erro_coleta = None
         except (mysql.Error, p.Error, OSError, ValueError) as erro:
             controle_tempo.clear()
+            with bloqueio_coleta:
+                erro_coleta = str(erro)
             if conexao is not None:
                 try:
                     conexao.rollback()
                 except mysql.Error:
                     pass
-            print(f"Falha na coleta: {erro}", file=sys.stderr, flush=True)
+            if pronto is None:
+                print(f"Falha na coleta: {erro}", file=sys.stderr, flush=True)
         finally:
             if cursor is not None:
                 try:
@@ -296,11 +321,35 @@ def captura_continua(parar):
                     conexao.close()
                 except mysql.Error:
                     pass
+            if pronto is not None:
+                pronto.set()
         parar.wait(5)
 
 
+def consultar_coleta():
+    with bloqueio_coleta:
+        if erro_coleta is not None:
+            raise ValueError(f"A última coleta falhou: {erro_coleta}")
+        if not ultima_coleta:
+            raise ValueError("Aguarde a primeira captura.")
+        return dict(ultima_coleta, leituras={
+            nome: dados.copy() for nome, dados in ultima_coleta["leituras"].items()
+        })
 
-def menu_principal(componentes_menu):
+
+def ultima_leitura(componente):
+    dados = consultar_coleta()["leituras"].get(componente)
+    if dados is None:
+        raise ValueError("O componente está inativo ou ainda não tem uma captura disponível.")
+    return dados
+
+
+def horario_local(horario):
+    return horario.replace(tzinfo=timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M:%S")
+
+
+
+def menu_principal(componentes_ativos):
     horario_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     print("""
@@ -314,7 +363,7 @@ def menu_principal(componentes_menu):
 | 3. Consultar dados armazenados                                                       |""".format(horario_atual))
     
     opcao = 4
-    for comp_nome in componentes_menu:
+    for comp_id, comp_nome in componentes_ativos:
         item = f"{opcao}. Opções de {comp_nome}"
         print(f"| {item:<84} |")
         opcao += 1
@@ -349,10 +398,13 @@ def informacoes_servidor():
     voltar()
 
 
-def consulta_completa(componentes_menu):
+def consulta_completa(componentes_ativos):
     limpar_menu()
 
-    horarioAtual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    coleta = consultar_coleta()
+    componentes_ativos = [(comp_id, comp_nome) for _, comp_id, comp_nome in coleta["componentes"]]
+    horarios = [dados["horario"] for dados in coleta["leituras"].values()]
+    horarioAtual = horario_local(max(horarios)) if horarios else datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     print("""
 +--------------------------------------------+-----------------------------------------+
@@ -361,18 +413,18 @@ def consulta_completa(componentes_menu):
 | Horário da captura: {:<64} |
 +--------------------------------------------+-----------------------------------------+""".format(horarioAtual))
 
-    for comp_nome in componentes_menu:
+    for comp_id, comp_nome in componentes_ativos:
         nome_formatado = comp_nome.strip().lower().replace("é", "e").replace("ó","o")
 
         if nome_formatado == "cpu":
-            dados_cpu = coletar_cpu()
+            dados_cpu = coleta["leituras"]["cpu"]
             freq = f"{dados_cpu['frequencia_cpu']:.2f} MHz" if dados_cpu["frequencia_cpu"] else "indisponivel"
             u_cpu = f"Uso de CPU: {dados_cpu['uso_cpu']:.2f}%"
             f_cpu = f"Frequência: {freq}"
             print(f"| {u_cpu:<84} |")
             print(f"| {f_cpu:<84} |")
         elif nome_formatado == "memoria":
-            dados_memoria = coletar_memoria()
+            dados_memoria = coleta["leituras"]["memoria"]
             u_mem = f"Uso de memória: {dados_memoria['uso_memoria']:.2f}%"
             t_mem = f"Memória total: {dados_memoria['memoria_total']:.2f} GiB"
             d_mem = f"Memória disponível: {dados_memoria['memoria_disponivel']:.2f} GiB"
@@ -380,7 +432,7 @@ def consulta_completa(componentes_menu):
             print(f"| {t_mem:<84} |")
             print(f"| {d_mem:<84} |")
         elif nome_formatado == "disco":
-            dados_disco = coletar_disco()
+            dados_disco = coleta["leituras"]["disco"]
             u_disc = f"Uso do Disco: {dados_disco['uso_disco']:.2f}%"
             print(f"| {u_disc:<84} |")
 
@@ -398,13 +450,20 @@ def consulta_banco():
             FROM captura c
             JOIN maquina m ON c.maquina_id = m.id
             JOIN empresa e ON m.fkEmpresa = e.id
-            WHERE LOWER(REPLACE(REPLACE(TRIM(m.macAddress), ':', ''), '-', '')) = %s
-                AND e.cnpj = %s
+            WHERE e.cnpj = %s
             ORDER BY c.data_hora DESC, c.id DESC LIMIT 10
-        """, (mac_da_maquina().replace(":", ""), cnpj_da_empresa()))
-        print(tabulate(cursor.fetchall(),
-                       headers=["Tipo", "Valor", "Unidade", "ID componente", "ID servidor", "ID empresa"],
-                       tablefmt="grid"))
+        """, (cnpj_da_empresa(),))
+        resultado_bd = cursor.fetchall()
+
+        print("+----------------------------------------------------------------------------------------------+")
+        print("|                                 INFORMAÇÕES DO BANCO DE DADOS                                |")
+        print("+----------------------------------------------------------------------------------------------+")
+
+        print(tabulate(
+                resultado_bd,
+                headers=["Tipo", "Valor", "Unidade de medida", "ID componente", "ID Servidor", "ID empresa"],
+                tablefmt="grid"
+            ))
     finally:
         if cursor is not None:
             cursor.close()
@@ -432,17 +491,17 @@ def menu_cpu():
         resposta = input("Digite a opção desejada: ").strip().lower()
         if resposta == "1":
             limpar_menu()
-            dados_cpu = coletar_cpu()
-            horarioAtual = dados_cpu["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            dados_cpu = ultima_leitura("cpu")
+            horarioAtual = horario_local(dados_cpu["horario"])
             uso_cpu = dados_cpu["uso_cpu"]
             u_cpu = f"Uso de CPU: {dados_cpu['uso_cpu']:.2f}%"
-            s_cpu = "Leitura local; alertas são avaliados pela coleta em segundo plano."
+            s_cpu = f"STATUS: {dados_cpu['status']}"
 
             print("""
 +--------------------------------------------+-----------------------------------------+
 |                                  USO DA CPU                                          |
 +--------------------------------------------+-----------------------------------------+
-| Horário atual: {:<69} |
+| Horário da captura: {:<64} |
 | {:<84} |
 | {:<84} |
 +--------------------------------------------+-----------------------------------------+
@@ -451,7 +510,7 @@ def menu_cpu():
         elif resposta == "2":
             limpar_menu()
             dados_cpu = coletar_cpu()
-            horarioAtual = dados_cpu["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            horarioAtual = horario_local(dados_cpu["horario"])
             n_fis = f"Núcleos físicos: {p.cpu_count(logical=False)}"
             n_log = f"Núcleos lógicos: {p.cpu_count(logical=True)}"
 
@@ -468,7 +527,7 @@ def menu_cpu():
         elif resposta == "3":
             limpar_menu()
             dados_cpu = coletar_cpu()
-            horarioAtual = dados_cpu["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            horarioAtual = horario_local(dados_cpu["horario"])
             freq_txt = f"{dados_cpu['frequencia_cpu']:.2f} MHz" if dados_cpu["frequencia_cpu"] is not None else "Frequência da CPU indisponível."
             f_txt = f"Frequência: {freq_txt}"
 
@@ -506,17 +565,17 @@ def menu_memoria():
         resposta = input("Digite a opção desejada: ").strip().lower()
         if resposta == "1":
             limpar_menu()
-            dados_memoria = coletar_memoria()
-            horarioAtual = dados_memoria["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            dados_memoria = ultima_leitura("memoria")
+            horarioAtual = horario_local(dados_memoria["horario"])
             uso_memoria = dados_memoria["uso_memoria"]
             u_mem = f"Uso de memória: {dados_memoria['uso_memoria']:.2f}%"
-            s_mem = "Leitura local; alertas são avaliados pela coleta em segundo plano."
+            s_mem = f"STATUS: {dados_memoria['status']}"
 
             print("""
 +--------------------------------------------+-----------------------------------------+
 |                                USO DA MEMÓRIA                                        |
 +--------------------------------------------+-----------------------------------------+
-| Horário atual: {:<69} |
+| Horário da captura: {:<64} |
 | {:<84} |
 | {:<84} |
 +--------------------------------------------+-----------------------------------------+
@@ -525,7 +584,7 @@ def menu_memoria():
         elif resposta == "2":
             limpar_menu()
             dados_memoria = coletar_memoria()
-            horarioAtual = dados_memoria["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            horarioAtual = horario_local(dados_memoria["horario"])
             t_mem = f"Memória total: {dados_memoria['memoria_total']:.2f} GiB"
             d_mem = f"Memória disponível: {dados_memoria['memoria_disponivel']:.2f} GiB"
 
@@ -564,17 +623,17 @@ def menu_disco():
         resposta = input("Digite a opção desejada: ").strip().lower()
         if resposta == "1":
             limpar_menu()
-            dados_disco = coletar_disco()
-            horarioAtual = dados_disco["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            dados_disco = ultima_leitura("disco")
+            horarioAtual = horario_local(dados_disco["horario"])
             uso_disco = dados_disco["uso_disco"]
             u_disc = f"Uso do disco: {dados_disco['uso_disco']:.2f}%"
-            s_disc = "Leitura local; alertas são avaliados pela coleta em segundo plano."
+            s_disc = f"STATUS: {dados_disco['status']}"
 
             print("""
 +--------------------------------------------+-----------------------------------------+
 |                                USO DO DISCO                                          |
 +--------------------------------------------+-----------------------------------------+
-| Horário atual: {:<69} |
+| Horário da captura: {:<64} |
 | {:<84} |
 | {:<84} |
 +--------------------------------------------+-----------------------------------------+
@@ -583,7 +642,7 @@ def menu_disco():
         elif resposta == "2":
             limpar_menu()
             dados_disco = coletar_disco()
-            horarioAtual = dados_disco["horario"].strftime("%d/%m/%Y %H:%M:%S")
+            horarioAtual = horario_local(dados_disco["horario"])
 
             caminho_disco = os.environ.get("SystemDrive", "C:") + "\\" if os.name == "nt" else str(HOST_ROOT)
             disco = p.disk_usage(caminho_disco)
@@ -628,34 +687,122 @@ def main():
     if sys.argv[1:] == ["--coletar"]:
         captura_continua(parar)
         return
-    thread = threading.Thread(target=captura_continua, args=(parar,))
-    thread.start()
-    componentes_menu = ["CPU", "Memória", "Disco"]
-    menus = {"4": menu_cpu, "5": menu_memoria, "6": menu_disco}
+
+    limpar_menu()
+    print("""
++--------------------------------------------+-----------------------------------------+
+|                    INICIANDO O SISTEMA DE MONITORAMENTO                              |
++--------------------------------------------+-----------------------------------------+
+""")
+    time.sleep(2)
+    limpar_menu()
+
+    print("""
++--------------------------------------------+-----------------------------------------+
+|                    CONECTANDO AO BANCO DE DADOS...                                   |
++--------------------------------------------+-----------------------------------------+
+""")
+
+    pronto = threading.Event()
+    thread_secundaria = threading.Thread(target=captura_continua, args=(parar, pronto))
+    thread_secundaria.start()
     try:
+        if not pronto.wait(20):
+            raise ValueError("Não foi possível concluir a primeira coleta em 20 segundos.")
+        coleta = consultar_coleta()
+        maquina_id = coleta["maquina_id"]
+        print("""
++--------------------------------------------+-----------------------------------------+
+|                    CONEXÃO COM O BANCO DE DADOS REALIZADA                            |
++--------------------------------------------+-----------------------------------------+
+""")
+        if coleta["maquina_encontrada"]:
+            msg_busca = f"Máquina encontrada com o ID {maquina_id}"
+            print("""
++--------------------------------------------+-----------------------------------------+
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(msg_busca))
+            print("""
++--------------------------------------------+-----------------------------------------+
+|                     SERVIDOR ATUALIZADO COM SUCESSO                                  |
++--------------------------------------------+-----------------------------------------+
+""")
+        else:
+            msg_cadastro = f"Máquina {maquina_id} cadastrada!"
+            print("""
++--------------------------------------------+-----------------------------------------+
+| {:<85} |
++--------------------------------------------+-----------------------------------------+
+""".format(msg_cadastro))
+
+        if coleta["configuracoes_criadas"] == 3:
+            print("""
++--------------------------------------------+-----------------------------------------+
+|           NENHUMA CONFIGURAÇÃO ENCONTRADA - APLICANDO PADRÃO                         |
++--------------------------------------------+-----------------------------------------+
+""")
+        if coleta["configuracoes_criadas"]:
+            print("Configuração padrão criada")
+
+        print("\n")
+        print("""
++--------------------------------------------+-----------------------------------------+
+|                           COMPONENTES MONITORADOS                                    |
++--------------------------------------------+-----------------------------------------+""")
+        for configuracao_id, comp_id, comp_nome in coleta["componentes"]:
+            item = f"ID {comp_id} - Componente {comp_nome}"
+            print(f"| {item:<84} |")
+        print("+--------------------------------------------+-----------------------------------------+")
+
+        info_servidor = f"ID do servidor: {maquina_id}"
+        print("""
++--------------------------------------------+-----------------------------------------+
+| {:<84} |
++--------------------------------------------+-----------------------------------------+
+""".format(info_servidor))
+        time.sleep(2)
+        limpar_menu()
+
         while not parar.is_set():
-            menu_principal(componentes_menu)
-            resposta = input("Digite a opção desejada: ").strip()
+            try:
+                coleta = consultar_coleta()
+                componentes_ativos = [(comp_id, comp_nome) for _, comp_id, comp_nome in coleta["componentes"]]
+            except ValueError as erro:
+                print(f"Não foi possível atualizar os componentes: {erro}")
+                componentes_ativos = []
+            menu_principal(componentes_ativos)
+            menus = {}
+            funcoes_menu = {"CPU": menu_cpu, "Memória": menu_memoria, "Disco": menu_disco}
+            for opcao, (comp_id, comp_nome) in enumerate(componentes_ativos, 4):
+                menus[str(opcao)] = funcoes_menu[comp_nome]
+            resposta = input("Digite a opção desejada: ").strip().lower()
             try:
                 if resposta == "0":
+                    limpar_menu()
+                    print("Encerrando o sistema de monitoramento...")
                     break
                 elif resposta == "1":
                     informacoes_servidor()
                 elif resposta == "2":
-                    consulta_completa(componentes_menu)
+                    consulta_completa(componentes_ativos)
                 elif resposta == "3":
                     consulta_banco()
                 elif resposta in menus:
                     menus[resposta]()
                 else:
-                    print("Opção inválida.")
+                    print("Opção inválida, tente novamente.")
+                    time.sleep(2.5)
+                    limpar_menu()
             except (mysql.Error, p.Error, OSError, ValueError) as erro:
                 print(f"Não foi possível concluir a consulta: {erro}")
     except (KeyboardInterrupt, EOFError):
         pass
+    except ValueError as erro:
+        print(f"Não foi possível iniciar o menu: {erro}")
     finally:
         parar.set()
-        thread.join()
+        thread_secundaria.join()
         print("Programa encerrado.")
 
 
