@@ -94,10 +94,13 @@ def configurar():
         empresa = conferir(dados)
         print(f"Configuração preservada: {empresa}, MAC {dados['MAC_ADDRESS']}.")
         return
-    endereco = input("Endereço da central (ex.: http://10.0.0.10:8080): ").strip().rstrip("/")
+    endereco = input("Endereço da central (ex.: 34.229.177.9:8080): ").strip().rstrip("/")
+    if not endereco.startswith(("http://", "https://")):
+        endereco = f"http://{endereco}"
+
     url = urlsplit(endereco)
     if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password or url.path or url.query or url.fragment:
-        raise ValueError("Informe o endereço completo da central, com http:// ou https:// e a porta.")
+        raise ValueError("Informe o endereço da central com IP e porta válidos (ex.: 34.229.177.9:8080).")
     email = input("E-mail cadastrado no site: ").strip()
     senha = getpass.getpass("Senha do site: ")
     pedido = Request(endereco + "/usuarios/instalar",
