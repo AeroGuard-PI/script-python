@@ -299,6 +299,18 @@ def captura_continua(parar, pronto=None):
                     **informacoes
                 }
                 erro_coleta = None
+            if pronto is None:
+                partes = []
+                for comp, campo, rotulo in (
+                    ("cpu", "uso_cpu", "CPU"),
+                    ("memoria", "uso_memoria", "Memória"),
+                    ("disco", "uso_disco", "Disco"),
+                ):
+                    if comp in leituras:
+                        partes.append(f"{rotulo} {leituras[comp][campo]:.1f}%")
+                detalhes = ", ".join(partes) if partes else f"{len(leituras)} métricas"
+                horario_fmt = datetime.now().strftime("%H:%M:%S")
+                print(f"[{horario_fmt}] Capturas de hardware salvas: {detalhes}", flush=True)
         except (mysql.Error, p.Error, OSError, ValueError) as erro:
             controle_tempo.clear()
             with bloqueio_coleta:
