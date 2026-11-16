@@ -12,8 +12,124 @@ import mysql.connector as mysql
 from dotenv import load_dotenv
 import threading
 from tabulate import tabulate
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 
 load_dotenv(os.getenv("AEROGUARD_ENV", Path(__file__).resolve().parent / ".env"), interpolate=False)
+
+# configuracao do slack
+slack_token = os.getenv("SLACK_BOT_TOKEN", "").strip()
+slack_canal = os.getenv("SLACK_CHANNEL", "#alertas-criticos").strip()
+slack_client = WebClient(token=slack_token) if slack_token else None
+
+def enviar_alerta_slack(componente, valor, status, limite_alerta, limite_critico, maquina_id, hostname=None, titulo="ALERTA DE MONITORAMENTO", canal=None):
+    if not slack_client:
+        return
+    alvo = f"{hostname} (Máquina {maquina_id})" if hostname else f"Máquina {maquina_id}"
+    if status == "NORMALIZADO":
+        aviso = f":white_check_mark: O componente {componente} voltou ao normal (abaixo de {limite_alerta}%)."
+    else:
+        aviso = f":warning: O componente {componente} ultrapassou o limite de atenção {limite_alerta}%. Pedimos que acompanhe a situação e tome a melhor decisão"
+    texto = (
+        f"---------------------------------------------------------------------------------------------------------------------------------------\n\n\n\n"
+        f"*{titulo}*\n\n"
+        f"*{alvo}:*\n"
+        f"*Métrica:* {componente}\n"
+        f"*Valor atual:* {valor:.1f}%\n"
+        f"*Status:* {status}\n\n"
+        f"{aviso}\n\n\n\n\u200b"
+    )
+
+    try:
+        slack_client.chat_postMessage(channel=canal or slack_canal, text=texto)
+    except SlackApiError as erro:
+        print(f"Erro Slack: {erro.response['error']}", flush=True)
+
+
+estado_slack = {}
+
+
+def obter_config_slack(cursor, empresa_id):
+    config = {
+        "ativo": True,
+        "canal": slack_canal,
+        "modo": "CONFIGURADO",
+        "nivel_minimo": "ALERTA",
+        "cooldown_min": 60,
+    }
+    if not empresa_id:
+        return config
+    try:
+        cursor.execute(
+            "SELECT ativo, canal, modo, nivel_minimo, cooldown_min FROM configuracao_slack WHERE empresa_id = %s LIMIT 1",
+            (empresa_id,),
+        )
+        linha = cursor.fetchone()
+    except mysql.Error:
+        return config
+    if not linha:
+        return config
+
+    config["ativo"] = bool(linha[0])
+    if linha[1]:
+        config["canal"] = linha[1]
+    if linha[2]:
+        config["modo"] = linha[2]
+    if linha[3]:
+        config["nivel_minimo"] = linha[3]
+    if linha[4] is not None:
+        config["cooldown_min"] = int(linha[4])
+    return config
+
+
+def notificar_slack(config, nome, chave, valor, status, limite_alerta, limite_critico, maquina_id, hostname=None):
+    if not config["ativo"] or not slack_client:
+        return
+
+    canal = config["canal"] or slack_canal
+
+    if config["modo"] == "TUDO":
+        if status != "NORMAL":
+            enviar_alerta_slack(nome, valor, status, limite_alerta, limite_critico, maquina_id, hostname, canal=canal)
+        return
+
+    if status == "ALERTA (PICO EM OBSERVAÇÃO)":
+        return
+
+    anterior = estado_slack.get(chave)
+    if anterior is None:
+        anterior = {"status": "NORMAL", "ultimo_envio": 0.0}
+
+    if status == "NORMAL":
+        if anterior["status"] != "NORMAL":
+            enviar_alerta_slack(
+                nome, valor, "NORMALIZADO", limite_alerta, limite_critico,
+                maquina_id, hostname, "MONITORAMENTO NORMALIZADO", canal=canal
+            )
+        estado_slack[chave] = {"status": "NORMAL", "ultimo_envio": 0.0}
+        return
+
+    if config["nivel_minimo"] == "CRITICO" and status == "ALERTA":
+        return
+
+    agora = time.monotonic()
+    mudou = status != anterior["status"]
+    passou_cooldown = False
+    if config["cooldown_min"] > 0:
+        passou_cooldown = (agora - anterior["ultimo_envio"]) >= (config["cooldown_min"] * 60)
+
+    if not mudou and not passou_cooldown:
+        return
+
+    if status == "CRÍTICO":
+        titulo = "ALERTA CRÍTICO"
+    elif mudou:
+        titulo = "ALERTA DE MONITORAMENTO"
+    else:
+        titulo = "LEMBRETE DE MONITORAMENTO"
+
+    enviar_alerta_slack(nome, valor, status, limite_alerta, limite_critico, maquina_id, hostname, titulo, canal=canal)
+    estado_slack[chave] = {"status": status, "ultimo_envio": agora}
 
 HOST_ROOT = Path(os.getenv("HOST_ROOT", "/"))
 if HOST_ROOT != Path("/"):
@@ -108,6 +224,8 @@ def identificacao_maquina(conexao, cursor, informacoes=None):
     maquinas = cursor.fetchall()
     if informacoes is not None:
         informacoes["maquina_encontrada"] = bool(maquinas)
+        informacoes["empresa_id"] = empresa_id
+        informacoes["hostname"] = hostname
     if not maquinas:
         cursor.execute("""
             INSERT INTO maquina (hostname, so, macAddress, fkEmpresa)
@@ -224,7 +342,8 @@ funcoes_coleta = {
     "disco": coletar_disco
 }
 
-def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos):
+def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos, empresa_id=None, hostname=None):
+    config_slack = obter_config_slack(cursor, empresa_id)
     cursor.execute("""
         SELECT id, limite, nivel_alerta FROM discretizacao
         WHERE nivel_alerta IN ('ALERTA', 'CRÍTICO')
@@ -262,6 +381,9 @@ def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos):
                     componentes_captura_id, discretizacao_id)
                 VALUES (%s, %s, %s, %s)
             """, (horario, captura_id, captura_id, niveis[nivel][0]))
+
+        notificar_slack(config_slack, nome, chave, valor, status, niveis["ALERTA"][1], niveis["CRÍTICO"][1], maquina_id, hostname)
+
         leituras[chave] = dict(dados, status=status)
     for componente in list(controle_tempo):
         if componente not in ativos:
@@ -289,7 +411,10 @@ def captura_continua(parar, pronto=None):
             conexao, cursor = conexao_bd()
             maquina_id = identificacao_maquina(conexao, cursor, informacoes)
             componentes = obter_componentes(conexao, cursor, maquina_id, informacoes)
-            leituras = capturas_alertas(cursor, conexao, maquina_id, componentes)
+            leituras = capturas_alertas(
+                cursor, conexao, maquina_id, componentes,
+                informacoes.get("empresa_id"), informacoes.get("hostname")
+            )
             conexao.commit()
             with bloqueio_coleta:
                 ultima_coleta = {
