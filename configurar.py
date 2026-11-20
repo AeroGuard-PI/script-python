@@ -88,6 +88,23 @@ def conferir(dados):
     return empresas[0][0]
 
 
+def ajustar_host_banco(entrada, host_padrao, porta_padrao):
+    texto = entrada.strip()
+    if not texto:
+        return str(host_padrao), str(porta_padrao)
+    texto = re.sub(r"^https?://", "", texto).split("/")[0]
+    if ":" in texto:
+        host, porta = texto.rsplit(":", 1)
+        if not host:
+            raise ValueError("IP do banco inválido.")
+        if porta == "8080":
+            return host, str(porta_padrao)
+        if not porta.isdigit() or not 1 <= int(porta) <= 65535:
+            raise ValueError("Porta do banco inválida.")
+        return host, porta
+    return texto, str(porta_padrao)
+
+
 def configurar():
     if ARQUIVO.exists():
         dados = ler()
@@ -114,8 +131,10 @@ def configurar():
             raise ValueError("E-mail ou senha inválidos.") from None
         raise ValueError(f"A central recusou a instalação (HTTP {erro.code}).") from None
     banco = resultado["banco"]
+    entrada_banco = input(f"IP do banco de dados [Enter para usar {banco['host']}]: ")
+    db_host, db_port = ajustar_host_banco(entrada_banco, banco["host"], banco["porta"])
     dados = {
-        "DB_HOST": str(banco["host"]), "DB_PORT": str(banco["porta"]),
+        "DB_HOST": db_host, "DB_PORT": db_port,
         "DB_USER": str(banco["usuario"]), "DB_PASSWORD": str(banco["senha"]),
         "EMPRESA_CNPJ": str(resultado["empresa"]["cnpj"]), "MAC_ADDRESS": mac_principal()
     }
