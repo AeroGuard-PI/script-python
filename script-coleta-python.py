@@ -244,7 +244,6 @@ def identificacao_maquina(conexao, cursor, informacoes=None):
 
 def obter_componentes(conexao, cursor, maquina_id, informacoes=None):
     ativos = []
-    configuracoes_criadas = 0
     for nome in ("CPU", "Memória", "Disco"):
         cursor.execute("SELECT id, nome FROM componentes WHERE nome = %s", (nome,))
         componentes = cursor.fetchall()
@@ -257,20 +256,11 @@ def obter_componentes(conexao, cursor, maquina_id, informacoes=None):
             ORDER BY data_hora DESC, id DESC LIMIT 1 FOR UPDATE
         """, (maquina_id, componente_id))
         configuracao = cursor.fetchone()
-        if configuracao is None:
-            cursor.execute("""
-                INSERT INTO configuracao_maquina (disponibilidade, maquina_captura_id, componentes_id)
-                VALUES (1, %s, %s)
-            """, (maquina_id, componente_id))
-            configuracao = (cursor.lastrowid, 1)
-            configuracoes_criadas += 1
-        if configuracao[1] == 1:
+        if configuracao is not None and configuracao[1] == 1:
             ativos.append((configuracao[0], componente_id, nome))
     if informacoes is not None:
-        informacoes["configuracoes_criadas"] = configuracoes_criadas
+        informacoes["configuracoes_criadas"] = 0
     return ativos
-
-
 
 controle_tempo = {}
 ultima_coleta = {}
@@ -344,29 +334,52 @@ funcoes_coleta = {
 
 def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos, empresa_id=None, hostname=None):
     config_slack = obter_config_slack(cursor, empresa_id)
-    cursor.execute("""
-        SELECT id, limite, nivel_alerta FROM discretizacao
-        WHERE nivel_alerta IN ('ALERTA', 'CRÍTICO')
-    """)
-    niveis = {}
-    for identificador, limite, nome in cursor.fetchall():
-        if nome in niveis:
-            raise ValueError(f"Existe mais de um nível {nome} em discretizacao.")
-        niveis[nome] = (identificador, limite)
-    if set(niveis) != {"ALERTA", "CRÍTICO"}:
-        raise ValueError("Cadastre os níveis ALERTA e CRÍTICO.")
-    if not 0 <= niveis["ALERTA"][1] < niveis["CRÍTICO"][1] <= 100:
-        raise ValueError("Os limites devem estar entre 0 e 100, com ALERTA menor que CRÍTICO.")
+    cursor.execute("SELECT fkEmpresa FROM maquina WHERE id = %s", (maquina_id,))
+    maquina = cursor.fetchone()
+    if maquina is None or (empresa_id is not None and maquina[0] != empresa_id):
+        raise ValueError(f"Máquina {hostname or maquina_id} não encontrada para a empresa informada.")
+    empresa_id = maquina[0]
+    ativos = set()
+    limites_por_configuracao = {}
+    for configuracao_id, componente_id, nome in componentes_ativos:
+        chave = nome.lower().replace("ó", "o")
+        cursor.execute("""
+            SELECT d.id, d.limite, d.nivel_alerta
+            FROM discretizacao d
+            JOIN configuracao_maquina cm ON cm.id = d.config_maquina_id
+            JOIN maquina m ON m.id = cm.maquina_captura_id
+            JOIN componentes c ON c.id = cm.componentes_id
+            WHERE m.id = %s AND m.fkEmpresa = %s AND cm.id = %s
+                AND cm.disponibilidade = 1 AND c.id = %s
+                AND d.empresa_id = m.fkEmpresa
+                AND d.nivel_alerta IN ('ALERTA', 'CRÍTICO')
+        """, (maquina_id, empresa_id, configuracao_id, componente_id))
+        niveis = {}
+        for identificador, limite, nivel in cursor.fetchall():
+            if nivel in niveis:
+                raise ValueError(f"Máquina {hostname or maquina_id}, componente {nome}: há mais de um registro {nivel}.")
+            niveis[nivel] = (identificador, limite)
+        if set(niveis) != {"ALERTA", "CRÍTICO"}:
+            faltantes = ", ".join(nivel for nivel in ("ALERTA", "CRÍTICO") if nivel not in niveis)
+            raise ValueError(f"Máquina {hostname or maquina_id}, componente {nome}: configuração incompleta; falta(m) {faltantes}.")
+        limite_alerta = niveis["ALERTA"][1]
+        limite_critico = niveis["CRÍTICO"][1]
+        if not 0 <= limite_alerta < limite_critico <= 100:
+            raise ValueError(f"Máquina {hostname or maquina_id}, componente {nome}: limites inválidos; ALERTA deve ser menor que CRÍTICO e ambos entre 0 e 100.")
+        limites_por_configuracao[configuracao_id] = niveis
     ativos = set()
     leituras = {}
     for configuracao_id, componente_id, nome in componentes_ativos:
         chave = nome.lower().replace("ó", "o")
         ativos.add(chave)
+        niveis = limites_por_configuracao[configuracao_id]
+        limite_alerta = niveis["ALERTA"][1]
+        limite_critico = niveis["CRÍTICO"][1]
         dados = funcoes_coleta[chave]()
         campos = {"cpu": "uso_cpu", "memoria": "uso_memoria", "disco": "uso_disco"}
         valor = dados[campos[chave]]
         horario = dados["horario"]
-        status = discretizar(valor, chave, niveis["ALERTA"][1], niveis["CRÍTICO"][1])
+        status = discretizar(valor, chave, limite_alerta, limite_critico)
         cursor.execute("""
             INSERT INTO captura (tipo, valor, data_hora, unidade_medida, maquina_id,
                 componentes_id, configuracao_maquina_maquina_id, configuracao_maquina_componentes_id)
@@ -380,9 +393,9 @@ def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos, empresa_id
                 INSERT INTO historico_alerta (data_hora, maquina_captura_id,
                     componentes_captura_id, discretizacao_id)
                 VALUES (%s, %s, %s, %s)
-            """, (horario, captura_id, captura_id, niveis[nivel][0]))
+            """, (horario, captura_id, captura_id, limites_por_configuracao[configuracao_id][nivel][0]))
 
-        notificar_slack(config_slack, nome, chave, valor, status, niveis["ALERTA"][1], niveis["CRÍTICO"][1], maquina_id, hostname)
+        notificar_slack(config_slack, nome, chave, valor, status, limite_alerta, limite_critico, maquina_id, hostname)
 
         leituras[chave] = dict(dados, status=status)
     for componente in list(controle_tempo):
