@@ -307,13 +307,15 @@ def coletar_memoria():
     memoria_total = memoria.total / (1024 ** 3)
     memoria_disponivel = memoria.available / (1024 ** 3)
     uso_memoria = memoria.percent
+    processos_ativos = len(p.pids())
 
     return {
         "horario": agora,
         "memoria": memoria,
         "memoria_total": memoria_total,
         "memoria_disponivel": memoria_disponivel,
-        "uso_memoria": uso_memoria
+        "uso_memoria": uso_memoria,
+        "processos_ativos": processos_ativos
     }
 
 def coletar_disco():
@@ -387,6 +389,17 @@ def capturas_alertas(cursor, conexao, maquina_id, componentes_ativos, empresa_id
         """, (f"Uso {nome}", valor, horario, "%", maquina_id, componente_id,
               configuracao_id, configuracao_id))
         captura_id = cursor.lastrowid
+        if chave == "memoria":
+            for tipo, valor_memoria, unidade in (
+                ("Quantidade de processos ativos", dados["processos_ativos"], "processos"),
+                ("Memória RAM total", dados["memoria_total"], "GB"),
+            ):
+                cursor.execute("""
+                    INSERT INTO captura (tipo, valor, data_hora, unidade_medida, maquina_id,
+                        componentes_id, configuracao_maquina_maquina_id, configuracao_maquina_componentes_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (tipo, valor_memoria, horario, unidade, maquina_id, componente_id,
+                      configuracao_id, configuracao_id))
         if status != "NORMAL":
             nivel = "CRÍTICO" if status == "CRÍTICO" else "ALERTA"
             cursor.execute("""
